@@ -43,8 +43,10 @@ A comprehensive job portal mobile application built with React Native and Expo, 
 #### Dashboard
 ![Dashboard](screenshots/dashboard.png)
 
-#### Job Search & Applications
+#### Job Search 
 ![Job Search](screenshots/jobss.png)
+
+#### Applications
 ![Applications](screenshots/applications.jpg)
 
 #### Profile Management
@@ -53,14 +55,19 @@ A comprehensive job portal mobile application built with React Native and Expo, 
 ### Employer Features
 
 #### Dashboard
-![Dashboard](screenshots/dash.png)
+![Dashboard](screenshots/dash.jpg)
+
+#### Post Job 
+![Post Job](screenshots/post.png)
 
 #### Job Management
-![Post Job](screenshots/post.png)
 ![My Jobs](screenshots/myjob.png)
 
 #### Candidate Management
 ![Candidates](screenshots/candidate.png) 
+
+#### Profile Management
+![Profile](screenshots/profilee.png)
 
 ## 🔧 Installation & Setup
 
