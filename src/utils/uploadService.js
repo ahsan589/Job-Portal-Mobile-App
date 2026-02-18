@@ -1,6 +1,8 @@
 // src/utils/uploadService.js
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
+import { doc, setDoc } from 'firebase/firestore';
+import { db } from '../config/firebase';
 
 // Helper function to convert blob to base64
 const blobToBase64 = (blob) => {

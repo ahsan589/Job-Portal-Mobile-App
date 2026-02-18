@@ -183,7 +183,10 @@ export default function DrawerLayout() {
           }}
           onPress={() => {
             navigation.closeDrawer();
-            router.push('/(main)/messages');
+            router.push(userData?.role === 'employer'
+              ? '/(main)/employer/message'
+              : '/(main)/jobseeker/message'
+            );
           }}
         >
           <MaterialIcons name="chat" size={24} color="#e67e22" />

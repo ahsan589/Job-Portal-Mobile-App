@@ -4,7 +4,10 @@ import { router } from 'expo-router';
 import { useEffect, useState } from 'react';
 import {
   Alert,
+  Animated,
+  Dimensions,
   FlatList,
+  RefreshControl,
   StyleSheet,
   Text,
   TouchableOpacity,
@@ -15,10 +18,14 @@ import { useAuth } from '../../../src/contexts/AuthContext';
 import { useFocusReload } from '../../../src/hooks/useFocusReload';
 import { JobService } from '../../../src/services/jobService';
 
+const { width } = Dimensions.get('window');
+
 const EmployerJobs = () => {
   const { user } = useAuth();
   const [jobs, setJobs] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const fadeAnim = useState(new Animated.Value(0))[0];
 
   useEffect(() => {
     if (user) {
@@ -31,6 +38,14 @@ const EmployerJobs = () => {
       loadJobs();
     }
   }, [user]);
+
+  useEffect(() => {
+    Animated.timing(fadeAnim, {
+      toValue: 1,
+      duration: 800,
+      useNativeDriver: true,
+    }).start();
+  }, []);
 
   const loadJobs = async () => {
     if (!user) {
@@ -61,12 +76,18 @@ const EmployerJobs = () => {
     }
   };
 
+  const onRefresh = async () => {
+    setRefreshing(true);
+    await loadJobs();
+    setRefreshing(false);
+  };
+
   const handleDeleteJob = async (jobId, jobTitle) => {
     console.log('Delete job initiated:', { jobId, jobTitle });
 
     Alert.alert(
-      'Delete Job',
-      `Are you sure you want to delete "${jobTitle}"? This action cannot be undone.`,
+      'Delete Job Post',
+      `Are you sure you want to delete "${jobTitle}"? This action cannot be undone and all applications will be lost.`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -85,7 +106,7 @@ const EmployerJobs = () => {
                   console.log('Jobs after deletion:', filtered.length);
                   return filtered;
                 });
-                Alert.alert('Success', 'Job deleted successfully');
+                Alert.alert('Success', 'Job posting deleted successfully');
               } else {
                 console.error('Delete job failed:', result.error);
                 Alert.alert('Error', `Failed to delete job: ${result.error}`);
@@ -114,90 +135,163 @@ const EmployerJobs = () => {
     });
   };
 
-  const renderJobCard = ({ item }) => (
-    <View style={styles.jobCard}>
-      <View style={styles.jobHeader}>
-        <View style={styles.jobInfo}>
-          <Text style={styles.jobTitle}>{item.title}</Text>
-          <Text style={styles.jobLocation}>{item.location}</Text>
-        </View>
-        <View style={styles.jobStatus}>
-          <Text style={[styles.statusText,
-            item.status === 'active' && styles.statusActive,
-            item.status === 'paused' && styles.statusPaused,
-            item.status === 'closed' && styles.statusClosed
-          ]}>
-            {item.status?.toUpperCase()}
+  const getStatusConfig = (status) => {
+    const configs = {
+      active: { 
+        color: '#10b981', 
+        bg: '#d1fae5', 
+        icon: 'rocket-launch',
+        label: 'ACTIVE'
+      },
+      paused: { 
+        color: '#f59e0b', 
+        bg: '#fef3c7', 
+        icon: 'pause-circle',
+        label: 'PAUSED'
+      },
+      closed: { 
+        color: '#ef4444', 
+        bg: '#fee2e2', 
+        icon: 'lock',
+        label: 'CLOSED'
+      },
+      draft: { 
+        color: '#6b7280', 
+        bg: '#f3f4f6', 
+        icon: 'drafts',
+        label: 'DRAFT'
+      }
+    };
+    return configs[status] || configs.active;
+  };
+
+  const renderJobCard = ({ item, index }) => {
+    const statusConfig = getStatusConfig(item.status);
+    const daysAgo = item.postedAt?.toDate ? 
+      Math.floor((new Date() - item.postedAt.toDate()) / (1000 * 60 * 60 * 24)) : 0;
+
+    return (
+      <Animated.View 
+        style={[
+          styles.jobCard,
+          {
+            opacity: fadeAnim,
+            transform: [{
+              translateY: fadeAnim.interpolate({
+                inputRange: [0, 1],
+                outputRange: [50 * (index + 1), 0],
+              }),
+            }],
+          },
+        ]}
+      >
+        {/* Status Ribbon */}
+        <View style={[styles.statusRibbon, { backgroundColor: statusConfig.bg }]}>
+          <MaterialIcons name={statusConfig.icon} size={14} color={statusConfig.color} />
+          <Text style={[styles.statusText, { color: statusConfig.color }]}>
+            {statusConfig.label}
           </Text>
         </View>
-      </View>
 
-      <View style={styles.jobStats}>
-        <View style={styles.statItem}>
-          <MaterialIcons name="people" size={20} color="#3498db" />
-          <Text style={styles.statValue}>{item.applicationsCount || 0}</Text>
-          <Text style={styles.statLabel}>Applications</Text>
+        {/* Job Header */}
+        <View style={styles.jobHeader}>
+          <View style={styles.jobInfo}>
+            <Text style={styles.jobTitle}>{item.title}</Text>
+            <View style={styles.locationContainer}>
+              <MaterialIcons name="location-on" size={16} color="#6b7280" />
+              <Text style={styles.jobLocation}>{item.location}</Text>
+            </View>
+          </View>
         </View>
-        <View style={styles.statItem}>
-          <FontAwesome5 name="eye" size={18} color="#2ecc71" />
-          <Text style={styles.statValue}>{item.views || 0}</Text>
-          <Text style={styles.statLabel}>Views</Text>
+
+        {/* Job Stats */}
+        <View style={styles.jobStats}>
+          <View style={styles.statItem}>
+            <View style={[styles.statIcon, { backgroundColor: '#dbeafe' }]}>
+              <MaterialIcons name="people" size={16} color="#3b82f6" />
+            </View>
+            <View style={styles.statTextContainer}>
+              <Text style={styles.statValue}>{item.applicationsCount || 0}</Text>
+              <Text style={styles.statLabel}>Applications</Text>
+            </View>
+          </View>
+          
+          <View style={styles.statDivider} />
+          
+          <View style={styles.statItem}>
+            <View style={[styles.statIcon, { backgroundColor: '#dcfce7' }]}>
+              <FontAwesome5 name="eye" size={14} color="#16a34a" />
+            </View>
+            <View style={styles.statTextContainer}>
+              <Text style={styles.statValue}>{item.views || 0}</Text>
+              <Text style={styles.statLabel}>Views</Text>
+            </View>
+          </View>
+          
+          <View style={styles.statDivider} />
+          
+          <View style={styles.statItem}>
+            <View style={[styles.statIcon, { backgroundColor: '#fef3c7' }]}>
+              <MaterialIcons name="access-time" size={16} color="#d97706" />
+            </View>
+            <View style={styles.statTextContainer}>
+              <Text style={styles.statValue}>{daysAgo}</Text>
+              <Text style={styles.statLabel}>Days Ago</Text>
+            </View>
+          </View>
         </View>
-        <View style={styles.statItem}>
-          <MaterialIcons name="access-time" size={20} color="#f39c12" />
-          <Text style={styles.statValue}>
-            {item.postedAt?.toDate ?
-              Math.floor((new Date() - item.postedAt.toDate()) / (1000 * 60 * 60 * 24))
-              : 0
-            }
-          </Text>
-          <Text style={styles.statLabel}>Days</Text>
+
+        {/* Description */}
+        <Text style={styles.jobDescription} numberOfLines={2}>
+          {item.description}
+        </Text>
+
+        {/* Action Buttons */}
+        <View style={styles.jobActions}>
+          <TouchableOpacity
+            style={[styles.actionButton, styles.applicationButton]}
+            onPress={() => handleViewApplications(item.id)}
+          >
+            <MaterialIcons name="people-alt" size={18} color="#3b82f6" />
+            <Text style={[styles.actionText, { color: '#3b82f6' }]}>View Apps</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.actionButton, styles.editButton]}
+            onPress={() => handleEditJob(item.id)}
+          >
+            <MaterialIcons name="edit" size={18} color="#f59e0b" />
+            <Text style={[styles.actionText, { color: '#f59e0b' }]}>Edit</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.actionButton, styles.deleteButton]}
+            onPress={() => handleDeleteJob(item.id, item.title)}
+          >
+            <MaterialIcons name="delete-outline" size={18} color="#ef4444" />
+            <Text style={[styles.actionText, { color: '#ef4444' }]}>Delete</Text>
+          </TouchableOpacity>
         </View>
-      </View>
-
-      <Text style={styles.jobDescription} numberOfLines={2}>
-        {item.description}
-      </Text>
-
-      <View style={styles.jobActions}>
-        <TouchableOpacity
-          style={styles.actionButton}
-          onPress={() => handleViewApplications(item.id)}
-        >
-          <MaterialIcons name="people" size={18} color="#3498db" />
-          <Text style={styles.actionText}>Applications</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={styles.actionButton}
-          onPress={() => handleEditJob(item.id)}
-        >
-          <MaterialIcons name="edit" size={18} color="#f39c12" />
-          <Text style={styles.actionText}>Edit</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[styles.actionButton, styles.deleteButton]}
-          onPress={() => handleDeleteJob(item.id, item.title)}
-        >
-          <MaterialIcons name="delete" size={18} color="#e74c3c" />
-          <Text style={styles.actionText}>Delete</Text>
-        </TouchableOpacity>
-      </View>
-    </View>
-  );
+      </Animated.View>
+    );
+  };
 
   return (
     <RoleGuard requiredRole="employer">
       <View style={styles.container} collapsable={false}>
-        {/* Header */}
+        {/* Enhanced Header */}
         <View style={styles.header}>
-          <Text style={styles.headerTitle}>My Jobs</Text>
+          <View style={styles.headerContent}>
+            <Text style={styles.headerTitle}>My Job Postings</Text>
+            <Text style={styles.headerSubtitle}>
+              {jobs.length} {jobs.length === 1 ? 'active posting' : 'active postings'}
+            </Text>
+          </View>
           <TouchableOpacity
             style={styles.postJobButton}
             onPress={() => router.push('/(main)/employer/post-job')}
           >
-            <Ionicons name="add-circle" size={20} color="white" />
+            <Ionicons name="add" size={22} color="white" />
             <Text style={styles.postJobText}>Post Job</Text>
           </TouchableOpacity>
         </View>
@@ -205,7 +299,8 @@ const EmployerJobs = () => {
         {/* Jobs List */}
         {loading ? (
           <View style={styles.loadingContainer}>
-            <Text>Loading your jobs...</Text>
+            <View style={styles.loadingSpinner} />
+            <Text style={styles.loadingText}>Loading your job postings...</Text>
           </View>
         ) : (
           <FlatList
@@ -214,18 +309,36 @@ const EmployerJobs = () => {
             keyExtractor={(item) => item.id}
             contentContainerStyle={styles.jobsList}
             showsVerticalScrollIndicator={false}
+            refreshControl={
+              <RefreshControl
+                refreshing={refreshing}
+                onRefresh={onRefresh}
+                colors={['#3b82f6']}
+                tintColor="#3b82f6"
+              />
+            }
             ListEmptyComponent={
-              <View style={styles.emptyContainer}>
-                <MaterialIcons name="work-off" size={64} color="#bdc3c7" />
-                <Text style={styles.emptyText}>No jobs posted yet</Text>
-                <Text style={styles.emptySubtext}>Create your first job posting to get started</Text>
+              <Animated.View 
+                style={[
+                  styles.emptyContainer,
+                  { opacity: fadeAnim }
+                ]}
+              >
+                <View style={styles.emptyIconContainer}>
+                  <MaterialIcons name="work-outline" size={80} color="#d1d5db" />
+                </View>
+                <Text style={styles.emptyTitle}>No job postings yet</Text>
+                <Text style={styles.emptySubtext}>
+                  Start creating job postings to attract talented candidates to your company
+                </Text>
                 <TouchableOpacity
                   style={styles.emptyButton}
                   onPress={() => router.push('/(main)/employer/post-job')}
                 >
-                  <Text style={styles.emptyButtonText}>Post Your First Job</Text>
+                  <Ionicons name="add-circle" size={20} color="white" />
+                  <Text style={styles.emptyButtonText}>Create First Job Post</Text>
                 </TouchableOpacity>
-              </View>
+              </Animated.View>
             }
           />
         )}
@@ -237,167 +350,268 @@ const EmployerJobs = () => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f8f9fa',
+    backgroundColor: '#f8fafc',
   },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     backgroundColor: 'white',
-    padding: 20,
+    paddingHorizontal: 24,
+    paddingVertical: 20,
     borderBottomWidth: 1,
-    borderBottomColor: '#ecf0f1',
+    borderBottomColor: '#e5e7eb',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 12,
+    elevation: 4,
+  },
+  headerContent: {
+    flex: 1,
   },
   headerTitle: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#2c3e50',
+    fontSize: 28,
+    fontWeight: '800',
+    color: '#1f2937',
+    letterSpacing: -0.5,
+  },
+  headerSubtitle: {
+    fontSize: 14,
+    color: '#6b7280',
+    marginTop: 4,
+    fontWeight: '500',
   },
   postJobButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#3498db',
-    paddingHorizontal: 15,
-    paddingVertical: 8,
-    borderRadius: 20,
+    backgroundColor: '#3b82f6',
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    borderRadius: 12,
+    shadowColor: '#3b82f6',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 4,
+    gap: 6,
   },
   postJobText: {
     color: 'white',
-    fontWeight: 'bold',
-    marginLeft: 5,
+    fontWeight: '700',
+    fontSize: 15,
   },
   jobsList: {
-    padding: 15,
+    padding: 16,
+    paddingBottom: 20,
   },
   jobCard: {
     backgroundColor: 'white',
-    padding: 20,
-    marginBottom: 15,
-    borderRadius: 12,
+    padding: 24,
+    marginBottom: 16,
+    borderRadius: 20,
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
+    shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
+    shadowRadius: 15,
+    elevation: 6,
+    borderWidth: 1,
+    borderColor: '#f3f4f6',
+    position: 'relative',
+    overflow: 'hidden',
   },
-  jobHeader: {
+  statusRibbon: {
+    position: 'absolute',
+    top: 16,
+    right: 16,
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: 15,
-  },
-  jobInfo: {
-    flex: 1,
-  },
-  jobTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#2c3e50',
-    marginBottom: 4,
-  },
-  jobLocation: {
-    fontSize: 14,
-    color: '#7f8c8d',
-  },
-  jobStatus: {
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 12,
-    backgroundColor: '#f8f9fa',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 20,
+    gap: 4,
   },
   statusText: {
-    fontSize: 12,
-    fontWeight: 'bold',
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.5,
   },
-  statusActive: {
-    color: '#27ae60',
+  jobHeader: {
+    marginBottom: 20,
+    marginRight: 100,
   },
-  statusPaused: {
-    color: '#f39c12',
+  jobTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#111827',
+    marginBottom: 8,
+    lineHeight: 24,
   },
-  statusClosed: {
-    color: '#e74c3c',
+  locationContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  jobLocation: {
+    fontSize: 15,
+    color: '#6b7280',
+    fontWeight: '500',
   },
   jobStats: {
     flexDirection: 'row',
-    justifyContent: 'space-around',
-    marginBottom: 15,
-    paddingVertical: 15,
-    backgroundColor: '#f8f9fa',
-    borderRadius: 8,
+    alignItems: 'center',
+    marginBottom: 20,
+    padding: 16,
+    backgroundColor: '#f8fafc',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#f1f5f9',
   },
   statItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    gap: 8,
+  },
+  statIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 10,
+    justifyContent: 'center',
     alignItems: 'center',
   },
+  statTextContainer: {
+    flex: 1,
+  },
   statValue: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#2c3e50',
-    marginTop: 5,
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#1f2937',
   },
   statLabel: {
-    fontSize: 12,
-    color: '#7f8c8d',
+    fontSize: 11,
+    color: '#6b7280',
+    fontWeight: '600',
     marginTop: 2,
   },
+  statDivider: {
+    width: 1,
+    height: 30,
+    backgroundColor: '#e5e7eb',
+    marginHorizontal: 8,
+  },
   jobDescription: {
-    color: '#34495e',
+    color: '#4b5563',
     fontSize: 14,
     lineHeight: 20,
-    marginBottom: 15,
+    marginBottom: 20,
   },
   jobActions: {
     flexDirection: 'row',
-    justifyContent: 'space-around',
+    justifyContent: 'space-between',
     borderTopWidth: 1,
-    borderTopColor: '#ecf0f1',
-    paddingTop: 15,
+    borderTopColor: '#f3f4f6',
+    paddingTop: 16,
+    gap: 8,
   },
   actionButton: {
+    flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    borderRadius: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+    backgroundColor: '#f8fafc',
+    flex: 1,
+    justifyContent: 'center',
+    gap: 6,
+    borderWidth: 1,
+    borderColor: '#f1f5f9',
+  },
+  applicationButton: {
+    backgroundColor: '#eff6ff',
+    borderColor: '#dbeafe',
+  },
+  editButton: {
+    backgroundColor: '#fffbeb',
+    borderColor: '#fef3c7',
   },
   deleteButton: {
-    backgroundColor: '#fdf2f2',
+    backgroundColor: '#fef2f2',
+    borderColor: '#fee2e2',
   },
   actionText: {
-    fontSize: 12,
-    color: '#7f8c8d',
-    marginTop: 4,
-    fontWeight: '500',
+    fontSize: 13,
+    fontWeight: '700',
   },
   loadingContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
+    backgroundColor: '#f8fafc',
+    gap: 16,
+  },
+  loadingSpinner: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    borderWidth: 3,
+    borderColor: '#e5e7eb',
+    borderTopColor: '#3b82f6',
+  },
+  loadingText: {
+    fontSize: 16,
+    color: '#6b7280',
+    fontWeight: '600',
   },
   emptyContainer: {
     alignItems: 'center',
-    padding: 40,
+    padding: 48,
+    marginTop: 40,
   },
-  emptyText: {
-    fontSize: 18,
-    color: '#7f8c8d',
-    marginTop: 15,
-    marginBottom: 5,
+  emptyIconContainer: {
+    width: 120,
+    height: 120,
+    borderRadius: 60,
+    backgroundColor: '#f8fafc',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 24,
+    borderWidth: 2,
+    borderColor: '#e5e7eb',
+    borderStyle: 'dashed',
+  },
+  emptyTitle: {
+    fontSize: 22,
+    color: '#374151',
+    fontWeight: '700',
+    marginBottom: 8,
+    textAlign: 'center',
   },
   emptySubtext: {
-    fontSize: 14,
-    color: '#bdc3c7',
+    fontSize: 15,
+    color: '#9ca3af',
     textAlign: 'center',
-    marginBottom: 20,
+    lineHeight: 22,
+    marginBottom: 32,
   },
   emptyButton: {
-    backgroundColor: '#3498db',
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    borderRadius: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#3b82f6',
+    paddingHorizontal: 24,
+    paddingVertical: 14,
+    borderRadius: 12,
+    shadowColor: '#3b82f6',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 4,
+    gap: 8,
   },
   emptyButtonText: {
     color: 'white',
-    fontWeight: 'bold',
+    fontWeight: '700',
+    fontSize: 15,
   },
 });
 

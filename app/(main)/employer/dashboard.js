@@ -8,6 +8,7 @@ import {
   Animated,
   Dimensions,
   Image,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
@@ -17,91 +18,99 @@ import {
 import RoleGuard from '../../../src/components/RoleGuard';
 import { useAuth } from '../../../src/contexts/AuthContext';
 import { JobService } from '../../../src/services/jobService';
+import { messageService } from '../../../src/services/messageService';
 
 const { width } = Dimensions.get('window');
 
 const EmployerDashboard = () => {
   const { user, userData } = useAuth();
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [stats, setStats] = useState({
     jobPostings: 0,
     applications: 0,
-    activeCandidates: 0
+    activeCandidates: 0,
+    interviewScheduled: 0
   });
   const [recentApplications, setRecentApplications] = useState([]);
   const [upcomingInterviews, setUpcomingInterviews] = useState([]);
 
-  // Define quickActions first
+  // Animation values
+  const fadeAnim = useRef(new Animated.Value(0)).current;
+  const slideAnim = useRef(new Animated.Value(50)).current;
+  const scaleAnim = useRef(new Animated.Value(0.9)).current;
+
+  useEffect(() => {
+    if (!loading) {
+      Animated.parallel([
+        Animated.timing(fadeAnim, {
+          toValue: 1,
+          duration: 800,
+          useNativeDriver: true,
+        }),
+        Animated.timing(slideAnim, {
+          toValue: 0,
+          duration: 600,
+          useNativeDriver: true,
+        }),
+        Animated.timing(scaleAnim, {
+          toValue: 1,
+          duration: 700,
+          useNativeDriver: true,
+        })
+      ]).start();
+    }
+  }, [loading]);
+
   const quickActions = [
     {
       title: 'Post a Job',
       icon: 'add-circle',
-      color: '#3498db',
+      color: '#6366f1',
+      gradient: ['#6366f1', '#4f46e5'],
       onPress: () => router.push('/(main)/employer/post-job')
     },
     {
       title: 'Manage Jobs',
       icon: 'work',
-      color: '#2ecc71',
+      color: '#10b981',
+      gradient: ['#10b981', '#059669'],
       onPress: () => router.push('/(main)/employer/jobs')
     },
     {
       title: 'Candidates',
       icon: 'people',
-      color: '#9b59b6',
+      color: '#8b5cf6',
+      gradient: ['#8b5cf6', '#7c3aed'],
       onPress: () => router.push('/(main)/employer/candidates')
     },
     {
-      title: 'Company Profile',
-      icon: 'business',
-      color: '#e67e22',
-      onPress: () => router.push('/(main)/employer/profile')
+      title: 'Messages',
+      icon: 'chat',
+      color: '#f59e0b',
+      gradient: ['#f59e0b', '#d97706'],
+      onPress: () => router.push('/(main)/employer/message')
     }
   ];
-
-  // Animation values
-  const messageButtonScale = useRef(new Animated.Value(1)).current;
-  const actionButtonScales = useRef(quickActions.map(() => new Animated.Value(1))).current;
-  const applicationCardScales = useRef(new Animated.Value(1)).current;
-  const interviewCardScales = useRef(new Animated.Value(1)).current;
-  const analyticsButtonScale = useRef(new Animated.Value(1)).current;
 
   useEffect(() => {
     loadDashboardData();
   }, [user]);
+
+  const onRefresh = async () => {
+    setRefreshing(true);
+    await loadDashboardData();
+    setRefreshing(false);
+  };
 
   const loadDashboardData = async () => {
     if (!user) return;
 
     setLoading(true);
     try {
-      // Load employer jobs
       const jobsResult = await JobService.getEmployerJobs(user.uid);
       if (jobsResult.success) {
         const jobs = jobsResult.data || [];
-        setStats(prev => ({
-          ...prev,
-          jobPostings: jobs.length
-        }));
-
-        // Calculate total applications across all jobs
-        let totalApplications = 0;
-        let activeCandidates = 0;
-
-        for (const job of jobs) {
-          if (job.applications) {
-            totalApplications += job.applications.length;
-            activeCandidates += job.applications.filter(app => app.status === 'pending' || app.status === 'reviewed').length;
-          }
-        }
-
-        setStats(prev => ({
-          ...prev,
-          applications: totalApplications,
-          activeCandidates: activeCandidates
-        }));
-
-        // Get recent applications (last 3)
         const allApplications = jobs.flatMap(job =>
           (job.applications || []).map(app => ({
             ...app,
@@ -110,8 +119,18 @@ const EmployerDashboard = () => {
           }))
         ).sort((a, b) => (b.appliedAt?.toDate?.() || new Date()) - (a.appliedAt?.toDate?.() || new Date()));
 
+        const interviews = allApplications.filter(app => app.status === 'interview');
+        
+        setStats({
+          jobPostings: jobs.length,
+          applications: allApplications.length,
+          activeCandidates: allApplications.filter(app => app.status === 'pending' || app.status === 'reviewed').length,
+          interviewScheduled: interviews.length
+        });
+
         setRecentApplications(allApplications.slice(0, 3).map(app => ({
           id: app.id,
+          applicantId: app.applicantId || app.userId,
           name: app.applicantName || 'Anonymous',
           position: app.jobTitle,
           status: app.status || 'New',
@@ -121,29 +140,71 @@ const EmployerDashboard = () => {
           image: require('../../../assets/images/logo.png')
         })));
 
-        // Get upcoming interviews
-        const interviews = allApplications.filter(app => app.status === 'interview');
         setUpcomingInterviews(interviews.slice(0, 2).map(app => ({
           id: app.id,
+          applicantId: app.applicantId || app.userId,
           candidate: app.applicantName || 'Anonymous',
           position: app.jobTitle,
           time: app.interviewDate || 'TBD',
-          type: app.interviewType || 'Video Call'
+          type: app.interviewType || 'Video Call',
+          date: app.interviewDate || new Date()
         })));
       }
     } catch (error) {
+      console.error('Error loading dashboard:', error);
       Alert.alert('Error', 'Failed to load dashboard data');
     } finally {
       setLoading(false);
     }
   };
 
+  const handleMessageCandidate = async (applicantId, applicantName) => {
+    if (!user || !applicantId) return;
+
+    try {
+      const result = await messageService.createConversation(user.uid, applicantId);
+      if (result.success) {
+        router.push({
+          pathname: '/(main)/employer/message',
+          params: { conversationId: result.id }
+        });
+      } else {
+        Alert.alert('Error', result.error || 'Failed to start conversation');
+      }
+    } catch (error) {
+      console.error('Error starting conversation:', error);
+      Alert.alert('Error', 'Failed to start conversation');
+    }
+  };
+
+  const StatCard = ({ icon, value, label, color, gradient }) => (
+    <Animated.View 
+      style={[
+        styles.statCard,
+        {
+          opacity: fadeAnim,
+          transform: [{ translateY: slideAnim }]
+        }
+      ]}
+    >
+      <View style={[styles.statIconContainer, { backgroundColor: `${color}15` }]}>
+        <MaterialIcons name={icon} size={24} color={color} />
+      </View>
+      <Text style={styles.statNumber}>{value}</Text>
+      <Text style={styles.statLabel}>{label}</Text>
+      <View style={[styles.statGradient, { 
+        backgroundColor: gradient ? gradient[0] : color,
+        opacity: 0.1 
+      }]} />
+    </Animated.View>
+  );
+
   if (loading) {
     return (
       <RoleGuard requiredRole="employer">
         <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color="#3498db" />
-          <Text style={styles.loadingText}>Loading dashboard...</Text>
+          <ActivityIndicator size="large" color="#6366f1" />
+          <Text style={styles.loadingText}>Loading your dashboard...</Text>
         </View>
       </RoleGuard>
     );
@@ -151,62 +212,103 @@ const EmployerDashboard = () => {
 
   return (
     <RoleGuard requiredRole="employer">
-      <ScrollView style={styles.container}>
-        <View style={styles.header}>
-          <View style={styles.welcomeSection}>
-            <Text style={styles.welcomeText}>Welcome back to</Text>
-            <Text style={styles.companyName}>
-              {userData?.companyName || 'Your Company'}
-            </Text>
+      <ScrollView 
+        style={styles.container}
+        showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+        }
+      >
+        {/* Header Section */}
+        <Animated.View 
+          style={[
+            styles.header,
+            {
+              opacity: fadeAnim,
+              transform: [{ translateY: slideAnim }]
+            }
+          ]}
+        >
+          <View style={styles.headerContent}>
+            <View>
+              <Text style={styles.welcomeText}>Welcome back,</Text>
+              <Text style={styles.companyName}>
+                {userData?.companyName || 'Your Company'}
+              </Text>
+              <Text style={styles.dateText}>
+                {new Date().toLocaleDateString('en-US', { 
+                  weekday: 'long', 
+                  year: 'numeric', 
+                  month: 'long', 
+                  day: 'numeric' 
+                })}
+              </Text>
+            </View>
+            <TouchableOpacity 
+              style={styles.profileButton}
+              onPress={() => router.push('/(main)/employer/profile')}
+            >
+              <Image
+                source={userData?.companyLogo ? { uri: userData.companyLogo } : require('../../../assets/images/logo.png')}
+                style={styles.companyLogo}
+              />
+              <View style={styles.onlineIndicator} />
+            </TouchableOpacity>
           </View>
-          <TouchableOpacity onPress={() => router.push('/(main)/employer/profile')}>
-            <Image
-              source={userData?.companyLogo ? { uri: userData.companyLogo } : require('../../../assets/images/logo.png')}
-              style={styles.companyLogo}
+        </Animated.View>
+
+        {/* Stats Grid */}
+        <Animated.View 
+          style={[
+            styles.statsContainer,
+            {
+              opacity: fadeAnim,
+              transform: [{ scale: scaleAnim }]
+            }
+          ]}
+        >
+          <View style={styles.statsGrid}>
+            <StatCard
+              icon="work"
+              value={stats.jobPostings}
+              label="Active Jobs"
+              color="#6366f1"
+              gradient={['#6366f1', '#4f46e5']}
             />
-          </TouchableOpacity>
-        </View>
-
-        {/* Quick message button */}
-        <View style={styles.section}>
-          <TouchableOpacity
-            style={styles.messageButton}
-            onPress={() => router.push('/(main)/messages')}
-          >
-            <MaterialIcons name="chat" size={24} color="white" />
-            <Text style={styles.messageButtonText}>Messages</Text>
-          </TouchableOpacity>
-        </View>
-
-        {/* Stats Cards */}
-        <View style={styles.statsContainer}>
-          <View style={styles.statCard}>
-            <View style={[styles.statIcon, { backgroundColor: '#e8f4fd' }]}>
-              <MaterialIcons name="work" size={24} color="#3498db" />
-            </View>
-            <Text style={styles.statNumber}>{stats.jobPostings}</Text>
-            <Text style={styles.statLabel}>Job Postings</Text>
+            <StatCard
+              icon="description"
+              value={stats.applications}
+              label="Applications"
+              color="#10b981"
+              gradient={['#10b981', '#059669']}
+            />
+            <StatCard
+              icon="people"
+              value={stats.activeCandidates}
+              label="Candidates"
+              color="#8b5cf6"
+              gradient={['#8b5cf6', '#7c3aed']}
+            />
+            <StatCard
+              icon="event"
+              value={stats.interviewScheduled}
+              label="Interviews"
+              color="#f59e0b"
+              gradient={['#f59e0b', '#d97706']}
+            />
           </View>
-
-          <View style={styles.statCard}>
-            <View style={[styles.statIcon, { backgroundColor: '#eafaf1' }]}>
-              <MaterialIcons name="description" size={24} color="#2ecc71" />
-            </View>
-            <Text style={styles.statNumber}>{stats.applications}</Text>
-            <Text style={styles.statLabel}>Applications</Text>
-          </View>
-
-          <View style={styles.statCard}>
-            <View style={[styles.statIcon, { backgroundColor: '#f4ecf7' }]}>
-              <MaterialIcons name="people" size={24} color="#9b59b6" />
-            </View>
-            <Text style={styles.statNumber}>{stats.activeCandidates}</Text>
-            <Text style={styles.statLabel}>Active Candidates</Text>
-          </View>
-        </View>
+        </Animated.View>
 
         {/* Quick Actions */}
-        <View style={styles.section}>
+        <Animated.View 
+          style={[
+            styles.section,
+            {
+              opacity: fadeAnim,
+              transform: [{ translateY: slideAnim }]
+            }
+          ]}
+        >
           <Text style={styles.sectionTitle}>Quick Actions</Text>
           <View style={styles.actionsGrid}>
             {quickActions.map((action, index) => (
@@ -215,99 +317,197 @@ const EmployerDashboard = () => {
                 style={styles.actionButton}
                 onPress={action.onPress}
               >
-                <View style={[styles.actionIcon, { backgroundColor: action.color }]}>
+                <View style={[styles.actionIcon, {
+                  backgroundColor: action.gradient ? action.gradient[0] : action.color
+                }]}>
                   <MaterialIcons name={action.icon} size={24} color="white" />
                 </View>
                 <Text style={styles.actionText}>{action.title}</Text>
               </TouchableOpacity>
             ))}
           </View>
-        </View>
+        </Animated.View>
 
         {/* Recent Applications */}
-        <View style={styles.section}>
+        <Animated.View 
+          style={[
+            styles.section,
+            {
+              opacity: fadeAnim,
+              transform: [{ translateY: slideAnim }]
+            }
+          ]}
+        >
           <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Recent Applications</Text>
-            <TouchableOpacity onPress={() => router.push('/(main)/employer/candidates')}>
-              <Text style={styles.seeAllText}>See All</Text>
+            <View style={styles.sectionTitleRow}>
+              <MaterialIcons name="description" size={24} color="#6366f1" />
+              <Text style={styles.sectionTitle}>Recent Applications</Text>
+            </View>
+            <TouchableOpacity 
+              style={styles.seeAllButton}
+              onPress={() => router.push('/(main)/employer/candidates')}
+            >
+              <Text style={styles.seeAllText}>View All</Text>
+              <MaterialIcons name="arrow-forward" size={16} color="#6366f1" />
             </TouchableOpacity>
           </View>
 
-          {recentApplications.map((application) => (
-            <TouchableOpacity key={application.id} style={styles.applicationCard}>
-              <Image source={application.image} style={styles.candidateImage} />
-              <View style={styles.applicationInfo}>
-                <Text style={styles.candidateName}>{application.name}</Text>
-                <Text style={styles.candidatePosition}>{application.position}</Text>
-                <Text style={styles.applicationDate}>{application.date}</Text>
-              </View>
-              <View style={[styles.statusBadge,
-                application.status === 'New' && styles.statusNew,
-                application.status === 'Reviewed' && styles.statusReviewed,
-                application.status === 'Interview' && styles.statusInterview
-              ]}>
-                <Text style={styles.statusText}>{application.status}</Text>
-              </View>
-            </TouchableOpacity>
-          ))}
-        </View>
-
-        {/* Upcoming Interviews */}
-        <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Upcoming Interviews</Text>
-          </View>
-
-          {upcomingInterviews.map((interview) => (
-            <View key={interview.id} style={styles.interviewCard}>
-              <View style={styles.interviewInfo}>
-                <Text style={styles.interviewCandidate}>{interview.candidate}</Text>
-                <Text style={styles.interviewPosition}>{interview.position}</Text>
-                <View style={styles.interviewDetails}>
-                  <View style={styles.interviewDetail}>
-                    <MaterialIcons name="access-time" size={16} color="#7f8c8d" />
-                    <Text style={styles.interviewDetailText}>{interview.time}</Text>
+          {recentApplications.length > 0 ? (
+            recentApplications.map((application, index) => (
+              <Animated.View
+                key={application.id}
+                style={[
+                  styles.applicationCard,
+                  {
+                    opacity: fadeAnim,
+                    transform: [{
+                      translateX: slideAnim.interpolate({
+                        inputRange: [0, 50],
+                        outputRange: [0, -20 * index],
+                      })
+                    }]
+                  }
+                ]}
+              >
+                <View style={styles.applicationContent}>
+                  <Image source={application.image} style={styles.candidateImage} />
+                  <View style={styles.applicationInfo}>
+                    <Text style={styles.candidateName}>{application.name}</Text>
+                    <Text style={styles.candidatePosition}>{application.position}</Text>
+                    <View style={styles.applicationMeta}>
+                      <MaterialIcons name="access-time" size={12} color="#94a3b8" />
+                      <Text style={styles.applicationDate}>{application.date}</Text>
+                    </View>
                   </View>
-                  <View style={styles.interviewDetail}>
-                    <MaterialIcons name="videocam" size={16} color="#7f8c8d" />
-                    <Text style={styles.interviewDetailText}>{interview.type}</Text>
+                  <View style={[
+                    styles.statusBadge,
+                    application.status === 'New' && styles.statusNew,
+                    application.status === 'Reviewed' && styles.statusReviewed,
+                    application.status === 'Interview' && styles.statusInterview
+                  ]}>
+                    <Text style={styles.statusText}>{application.status}</Text>
                   </View>
                 </View>
-              </View>
-              <View style={styles.interviewActions}>
-                <TouchableOpacity style={styles.interviewActionButton}>
-                  <MaterialIcons name="chat" size={20} color="#3498db" />
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.interviewActionButton}>
-                  <MaterialIcons name="calendar-today" size={20} color="#3498db" />
-                </TouchableOpacity>
-              </View>
+                <View style={styles.applicationActions}>
+                  <TouchableOpacity 
+                    style={styles.applicationActionButton}
+                    onPress={() => router.push({
+                      pathname: '/(main)/employer/application-details',
+                      params: { applicationId: application.id }
+                    })}
+                  >
+                    <Text style={styles.applicationActionText}>View Details</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity 
+                    style={styles.applicationActionButton}
+                    onPress={() => handleMessageCandidate(application.applicantId, application.name)}
+                  >
+                    <MaterialIcons name="chat" size={16} color="#6366f1" />
+                  </TouchableOpacity>
+                </View>
+              </Animated.View>
+            ))
+          ) : (
+            <View style={styles.emptyState}>
+              <MaterialIcons name="description" size={48} color="#cbd5e1" />
+              <Text style={styles.emptyStateText}>No applications yet</Text>
+              <Text style={styles.emptyStateSubtext}>
+                Applications will appear here when candidates apply to your jobs
+              </Text>
             </View>
-          ))}
-        </View>
+          )}
+        </Animated.View>
 
-        {/* Analytics Preview */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Performance Analytics</Text>
-          <View style={styles.analyticsCard}>
-            <View style={styles.analyticsItem}>
-              <Text style={styles.analyticsValue}>42%</Text>
-              <Text style={styles.analyticsLabel}>Application Rate</Text>
+        {/* Upcoming Interviews */}
+        {upcomingInterviews.length > 0 && (
+          <Animated.View 
+            style={[
+              styles.section,
+              {
+                opacity: fadeAnim,
+                transform: [{ translateY: slideAnim }]
+              }
+            ]}
+          >
+            <View style={styles.sectionHeader}>
+              <View style={styles.sectionTitleRow}>
+                <MaterialIcons name="event" size={24} color="#f59e0b" />
+                <Text style={styles.sectionTitle}>Upcoming Interviews</Text>
+              </View>
             </View>
-            <View style={styles.analyticsItem}>
-              <Text style={styles.analyticsValue}>18%</Text>
-              <Text style={styles.analyticsLabel}>Interview Rate</Text>
-            </View>
-            <View style={styles.analyticsItem}>
-              <Text style={styles.analyticsValue}>7 days</Text>
-              <Text style={styles.analyticsLabel}>Avg. Hiring Time</Text>
+
+            {upcomingInterviews.map((interview) => (
+              <View key={interview.id} style={styles.interviewCard}>
+                <View style={styles.interviewContent}>
+                  <View style={styles.interviewIcon}>
+                    <MaterialIcons name="videocam" size={24} color="#f59e0b" />
+                  </View>
+                  <View style={styles.interviewInfo}>
+                    <Text style={styles.interviewCandidate}>{interview.candidate}</Text>
+                    <Text style={styles.interviewPosition}>{interview.position}</Text>
+                    <View style={styles.interviewDetails}>
+                      <View style={styles.interviewDetail}>
+                        <MaterialIcons name="access-time" size={14} color="#64748b" />
+                        <Text style={styles.interviewDetailText}>{interview.time}</Text>
+                      </View>
+                      <View style={styles.interviewDetail}>
+                        <MaterialIcons name="video-call" size={14} color="#64748b" />
+                        <Text style={styles.interviewDetailText}>{interview.type}</Text>
+                      </View>
+                    </View>
+                  </View>
+                </View>
+                <View style={styles.interviewActions}>
+                  <TouchableOpacity 
+                    style={styles.interviewActionButton}
+                    onPress={() => handleMessageCandidate(interview.applicantId, interview.candidate)}
+                  >
+                    <MaterialIcons name="chat" size={20} color="#6366f1" />
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.interviewActionButton}>
+                    <MaterialIcons name="calendar-today" size={20} color="#10b981" />
+                  </TouchableOpacity>
+                </View>
+              </View>
+            ))}
+          </Animated.View>
+        )}
+
+        {/* Performance Metrics */}
+        <Animated.View 
+          style={[
+            styles.section,
+            {
+              opacity: fadeAnim,
+              transform: [{ translateY: slideAnim }]
+            }
+          ]}
+        >
+          <View style={styles.sectionHeader}>
+            <View style={styles.sectionTitleRow}>
+              <MaterialIcons name="analytics" size={24} color="#10b981" />
+              <Text style={styles.sectionTitle}>Performance Overview</Text>
             </View>
           </View>
-          <TouchableOpacity style={styles.analyticsButton}>
-            <Text style={styles.analyticsButtonText}>View Detailed Analytics</Text>
-            <MaterialIcons name="arrow-forward" size={20} color="#3498db" />
-          </TouchableOpacity>
-        </View>
+          <View style={styles.metricsGrid}>
+            <View style={styles.metricItem}>
+              <Text style={styles.metricValue}>
+                {stats.jobPostings > 0 ? Math.round((stats.applications / stats.jobPostings) * 100) : 0}%
+              </Text>
+              <Text style={styles.metricLabel}>Application Rate</Text>
+            </View>
+            <View style={styles.metricItem}>
+              <Text style={styles.metricValue}>
+                {stats.applications > 0 ? Math.round((upcomingInterviews.length / stats.applications) * 100) : 0}%
+              </Text>
+              <Text style={styles.metricLabel}>Interview Rate</Text>
+            </View>
+            <View style={styles.metricItem}>
+              <Text style={styles.metricValue}>7d</Text>
+              <Text style={styles.metricLabel}>Avg. Response</Text>
+            </View>
+          </View>
+        </Animated.View>
       </ScrollView>
     </RoleGuard>
   );
@@ -316,90 +516,174 @@ const EmployerDashboard = () => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f8f9fa',
+    backgroundColor: '#f8fafc',
   },
   loadingContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#f8f9fa',
+    backgroundColor: '#f8fafc',
   },
   loadingText: {
-    marginTop: 10,
+    marginTop: 16,
     fontSize: 16,
-    color: '#7f8c8d',
+    color: '#64748b',
+    fontFamily: 'System',
   },
   header: {
+    backgroundColor: 'white',
+    paddingHorizontal: 24,
+    paddingTop: 60,
+    paddingBottom: 24,
+    borderBottomLeftRadius: 24,
+    borderBottomRightRadius: 24,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 12,
+    elevation: 8,
+  },
+  headerContent: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: 20,
-    backgroundColor: 'white',
-  },
-  welcomeSection: {
-    flex: 1,
+    alignItems: 'flex-start',
   },
   welcomeText: {
     fontSize: 16,
-    color: '#7f8c8d',
+    color: '#64748b',
+    marginBottom: 4,
+    fontFamily: 'System',
+    fontWeight: '500',
   },
   companyName: {
-    fontSize: 24,
+    fontSize: 28,
     fontWeight: 'bold',
-    color: '#2c3e50',
+    color: '#1e293b',
+    marginBottom: 8,
+    fontFamily: 'System',
+  },
+  dateText: {
+    fontSize: 14,
+    color: '#94a3b8',
+    fontFamily: 'System',
+  },
+  profileButton: {
+    position: 'relative',
   },
   companyLogo: {
-    width: 50,
-    height: 50,
-    borderRadius: 8,
+    width: 56,
+    height: 56,
+    borderRadius: 16,
+    borderWidth: 3,
+    borderColor: '#f1f5f9',
+  },
+  onlineIndicator: {
+    position: 'absolute',
+    bottom: 2,
+    right: 2,
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    backgroundColor: '#10b981',
+    borderWidth: 2,
+    borderColor: 'white',
   },
   statsContainer: {
+    paddingHorizontal: 20,
+    marginTop: -40,
+    marginBottom: 16,
+  },
+  statsGrid: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     justifyContent: 'space-between',
-    padding: 15,
-    backgroundColor: 'white',
   },
   statCard: {
-    alignItems: 'center',
-    flex: 1,
+    width: '48%',
+    backgroundColor: 'white',
+    padding: 20,
+    borderRadius: 16,
+    marginBottom: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 4,
+    position: 'relative',
+    overflow: 'hidden',
   },
-  statIcon: {
-    width: 50,
-    height: 50,
-    borderRadius: 25,
+  statIconContainer: {
+    width: 48,
+    height: 48,
+    borderRadius: 12,
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 8,
+    marginBottom: 12,
   },
   statNumber: {
-    fontSize: 18,
+    fontSize: 24,
     fontWeight: 'bold',
-    color: '#2c3e50',
+    color: '#1e293b',
+    marginBottom: 4,
+    fontFamily: 'System',
   },
   statLabel: {
-    fontSize: 12,
-    color: '#7f8c8d',
-    marginTop: 2,
+    fontSize: 14,
+    color: '#64748b',
+    fontFamily: 'System',
+    fontWeight: '500',
+  },
+  statGradient: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    width: 60,
+    height: 60,
+    borderRadius: 30,
   },
   section: {
     backgroundColor: 'white',
-    marginTop: 10,
-    padding: 20,
+    marginHorizontal: 20,
+    marginBottom: 20,
+    padding: 24,
+    borderRadius: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 12,
+    elevation: 3,
   },
   sectionHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 15,
+    marginBottom: 20,
+  },
+  sectionTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
   },
   sectionTitle: {
-    fontSize: 18,
+    fontSize: 20,
     fontWeight: 'bold',
-    color: '#2c3e50',
+    color: '#1e293b',
+    fontFamily: 'System',
+  },
+  seeAllButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+    backgroundColor: '#f1f5f9',
   },
   seeAllText: {
-    color: '#3498db',
-    fontWeight: '500',
+    color: '#6366f1',
+    fontSize: 14,
+    fontWeight: '600',
+    fontFamily: 'System',
   },
   actionsGrid: {
     flexDirection: 'row',
@@ -409,36 +693,46 @@ const styles = StyleSheet.create({
   actionButton: {
     width: '48%',
     alignItems: 'center',
-    marginBottom: 15,
+    marginBottom: 16,
   },
   actionIcon: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
+    width: 64,
+    height: 64,
+    borderRadius: 20,
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 8,
+    marginBottom: 12,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+    elevation: 6,
   },
   actionText: {
     fontSize: 14,
-    fontWeight: '500',
-    color: '#2c3e50',
+    fontWeight: '600',
+    color: '#1e293b',
     textAlign: 'center',
+    fontFamily: 'System',
   },
   applicationCard: {
+    backgroundColor: '#f8fafc',
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 12,
+    borderLeftWidth: 4,
+    borderLeftColor: '#6366f1',
+  },
+  applicationContent: {
     flexDirection: 'row',
     alignItems: 'center',
-    padding: 15,
-    borderWidth: 1,
-    borderColor: '#ecf0f1',
-    borderRadius: 10,
-    marginBottom: 10,
+    marginBottom: 12,
   },
   candidateImage: {
-    width: 50,
-    height: 50,
-    borderRadius: 25,
-    marginRight: 15,
+    width: 48,
+    height: 48,
+    borderRadius: 12,
+    marginRight: 12,
   },
   applicationInfo: {
     flex: 1,
@@ -446,46 +740,91 @@ const styles = StyleSheet.create({
   candidateName: {
     fontSize: 16,
     fontWeight: 'bold',
-    color: '#2c3e50',
+    color: '#1e293b',
     marginBottom: 2,
+    fontFamily: 'System',
   },
   candidatePosition: {
     fontSize: 14,
-    color: '#7f8c8d',
-    marginBottom: 4,
+    color: '#64748b',
+    marginBottom: 6,
+    fontFamily: 'System',
+  },
+  applicationMeta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
   },
   applicationDate: {
     fontSize: 12,
-    color: '#95a5a6',
+    color: '#94a3b8',
+    fontFamily: 'System',
   },
   statusBadge: {
-    paddingHorizontal: 10,
-    paddingVertical: 5,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
     borderRadius: 12,
   },
   statusNew: {
-    backgroundColor: '#e8f4fd',
+    backgroundColor: '#e0e7ff',
   },
   statusReviewed: {
-    backgroundColor: '#eafaf1',
+    backgroundColor: '#d1fae5',
   },
   statusInterview: {
-    backgroundColor: '#fff4e6',
+    backgroundColor: '#fef3c7',
   },
   statusText: {
     fontSize: 12,
-    fontWeight: '500',
+    fontWeight: '600',
+    fontFamily: 'System',
   },
-  interviewCard: {
+  applicationActions: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    padding: 15,
-    borderWidth: 1,
-    borderColor: '#ecf0f1',
-    borderRadius: 10,
-    marginBottom: 10,
-    backgroundColor: '#f8f9fa',
+  },
+  applicationActionButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 8,
+    backgroundColor: 'white',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  applicationActionText: {
+    color: '#6366f1',
+    fontSize: 14,
+    fontWeight: '600',
+    fontFamily: 'System',
+  },
+  interviewCard: {
+    backgroundColor: '#fffbeb',
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 12,
+    borderLeftWidth: 4,
+    borderLeftColor: '#f59e0b',
+  },
+  interviewContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  interviewIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 12,
+    backgroundColor: '#fef3c7',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
   },
   interviewInfo: {
     flex: 1,
@@ -493,17 +832,19 @@ const styles = StyleSheet.create({
   interviewCandidate: {
     fontSize: 16,
     fontWeight: 'bold',
-    color: '#2c3e50',
+    color: '#1e293b',
     marginBottom: 2,
+    fontFamily: 'System',
   },
   interviewPosition: {
     fontSize: 14,
-    color: '#7f8c8d',
+    color: '#64748b',
     marginBottom: 8,
+    fontFamily: 'System',
   },
   interviewDetails: {
     flexDirection: 'row',
-    gap: 15,
+    gap: 16,
   },
   interviewDetail: {
     flexDirection: 'row',
@@ -512,71 +853,67 @@ const styles = StyleSheet.create({
   },
   interviewDetailText: {
     fontSize: 12,
-    color: '#7f8c8d',
+    color: '#64748b',
+    fontFamily: 'System',
   },
   interviewActions: {
     flexDirection: 'row',
-    gap: 10,
+    gap: 8,
+    justifyContent: 'flex-end',
   },
   interviewActionButton: {
     width: 40,
     height: 40,
-    borderRadius: 20,
-    backgroundColor: '#e8f4fd',
+    borderRadius: 12,
+    backgroundColor: 'white',
     justifyContent: 'center',
     alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 2,
   },
-  analyticsCard: {
+  metricsGrid: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    padding: 20,
-    backgroundColor: '#f8f9fa',
-    borderRadius: 10,
-    marginBottom: 15,
   },
-  analyticsItem: {
+  metricItem: {
     alignItems: 'center',
     flex: 1,
   },
-  analyticsValue: {
+  metricValue: {
     fontSize: 20,
     fontWeight: 'bold',
-    color: '#2c3e50',
-    marginBottom: 5,
+    color: '#1e293b',
+    marginBottom: 4,
+    fontFamily: 'System',
   },
-  analyticsLabel: {
+  metricLabel: {
     fontSize: 12,
-    color: '#7f8c8d',
+    color: '#64748b',
     textAlign: 'center',
-  },
-  analyticsButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 12,
-    borderWidth: 1,
-    borderColor: '#3498db',
-    borderRadius: 8,
-  },
-  analyticsButtonText: {
-    color: '#3498db',
+    fontFamily: 'System',
     fontWeight: '500',
-    marginRight: 5,
   },
-  messageButton: {
-    flexDirection: 'row',
+  emptyState: {
     alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#3498db',
-    padding: 15,
-    borderRadius: 10,
-    marginBottom: 10,
+    padding: 40,
   },
-  messageButtonText: {
-    color: 'white',
-    fontSize: 16,
-    fontWeight: 'bold',
-    marginLeft: 10,
+  emptyStateText: {
+    fontSize: 18,
+    color: '#475569',
+    fontWeight: '600',
+    marginTop: 16,
+    fontFamily: 'System',
+  },
+  emptyStateSubtext: {
+    fontSize: 14,
+    color: '#94a3b8',
+    textAlign: 'center',
+    marginTop: 8,
+    lineHeight: 20,
+    fontFamily: 'System',
   },
 });
 

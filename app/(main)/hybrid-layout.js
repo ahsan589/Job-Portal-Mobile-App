@@ -183,6 +183,36 @@ export default function HybridLayout() {
 
 
 
+        {/* Messages */}
+        <TouchableOpacity
+          style={{
+            flexDirection: 'row',
+            alignItems: 'center',
+            padding: 12,
+            backgroundColor: 'white',
+            marginHorizontal: 10,
+            marginBottom: 5,
+            borderRadius: 8,
+            shadowColor: '#000',
+            shadowOffset: { width: 0, height: 1 },
+            shadowOpacity: 0.1,
+            shadowRadius: 2,
+            elevation: 2
+          }}
+          onPress={() => {
+            navigation.closeDrawer();
+            router.push(userData?.role === 'employer'
+              ? '/(main)/employer/message'
+              : '/(main)/jobseeker/message'
+            );
+          }}
+        >
+          <MaterialIcons name="message" size={20} color="#9b59b6" />
+          <Text style={{ marginLeft: 12, fontSize: 14, color: '#2c3e50' }}>
+            Messages
+          </Text>
+        </TouchableOpacity>
+
         {/* Community Posts */}
         <TouchableOpacity
           style={{
@@ -433,6 +463,27 @@ export default function HybridLayout() {
       />
       <Drawer.Screen
         name="jobseeker/job-details"
+        options={{
+          drawerItemStyle: { display: 'none' },
+          headerShown: false,
+        }}
+      />
+      <Drawer.Screen
+        name="jobseeker/chatbot"
+        options={{
+          drawerItemStyle: { display: 'none' },
+          headerShown: false,
+        }}
+      />
+      <Drawer.Screen
+        name="employer/message"
+        options={{
+          drawerItemStyle: { display: 'none' },
+          headerShown: false,
+        }}
+      />
+      <Drawer.Screen
+        name="jobseeker/message"
         options={{
           drawerItemStyle: { display: 'none' },
           headerShown: false,
