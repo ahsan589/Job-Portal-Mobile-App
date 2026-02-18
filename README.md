@@ -2,10 +2,8 @@
 
 A comprehensive job portal mobile application built with React Native and Expo, designed to connect job seekers with employers through an intuitive and feature-rich platform.  
 
-🚧 **Note**: This app is currently under active development. currently working on **community posts** and **real-time messaging between employers and job seekers**.  
-
 ## 🚀 Features
-
+- **real-time messaging between employers and job seekers**
 ### For Job Seekers
 - **User Registration & Authentication**: Secure signup and login with email verification  
 - **Profile Management**: Complete profile setup with skills, experience, and resume upload  
