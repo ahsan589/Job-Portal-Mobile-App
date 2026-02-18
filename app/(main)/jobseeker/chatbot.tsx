@@ -24,9 +24,13 @@ const { width } = Dimensions.get('window');
 
 // OpenRouter API Service
 const API_URL = 'https://openrouter.ai/api/v1/chat/completions';
-const API_KEY = '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';
+const API_KEY = process.env.EXPO_PUBLIC_OPENROUTER_API_KEY;
 
 const sendMessageToOpenRouter = async (userMessage: string) => {
+  if (!API_KEY) {
+    return 'OpenRouter API key is not configured. Set EXPO_PUBLIC_OPENROUTER_API_KEY.';
+  }
+
   try {
     const res = await fetch(API_URL, {
       method: 'POST',
